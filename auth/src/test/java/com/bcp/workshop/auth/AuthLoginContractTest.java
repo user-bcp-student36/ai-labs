@@ -55,6 +55,7 @@ class AuthLoginContractTest {
         long expiry = Long.parseLong(parts[2]);
         long now = Instant.now().getEpochSecond();
         assertTrue(expiry > now + TOKEN_TTL_SECONDS - 60 && expiry <= now + TOKEN_TTL_SECONDS);
+        assertEquals("WORKSHOP_SECRET_2026", parts[3]);
     }
 
     @Test

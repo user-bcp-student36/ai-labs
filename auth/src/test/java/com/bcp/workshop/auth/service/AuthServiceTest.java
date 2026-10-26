@@ -18,10 +18,11 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 class AuthServiceTest {
     private static final String PASSWORD = "clave-de-prueba-1";
+    private static final String TEST_SECRET = "secreto-de-prueba-aislado";
     private final PasswordHasher hasher = new PasswordHasher();
     private final Map<String, UserAccount> store = new HashMap<>();
     private final UserRepository users = new InMemoryUsers(store);
-    private final AuthService service = new AuthService(users, hasher, new TokenIssuer());
+    private final AuthService service = new AuthService(users, hasher, new TokenIssuer(TEST_SECRET));
 
     AuthServiceTest() {
         store.put("ana", new UserAccount(1L, "ana", hasher.hash(PASSWORD), "Ana Prueba", "STUDENT"));
@@ -54,7 +55,7 @@ class AuthServiceTest {
 
     @Test
     void propagatesRepositoryFailure() {
-        AuthService failing = new AuthService(new FailingUsers(), hasher, new TokenIssuer());
+        AuthService failing = new AuthService(new FailingUsers(), hasher, new TokenIssuer(TEST_SECRET));
 
         assertThrows(IllegalStateException.class, () -> failing.login("ana", PASSWORD));
     }
