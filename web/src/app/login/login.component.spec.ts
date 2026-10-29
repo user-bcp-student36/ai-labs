@@ -14,7 +14,7 @@ const VALID_PASSWORD = 'secreto-de-prueba';
 
 function createLogin(username: string, password: string) {
   const navigate = vi.fn().mockResolvedValue(true);
-  const component = new LoginComponent({ navigate } as unknown as Router);
+  const component = new LoginComponent({ navigate, getCurrentNavigation: () => null } as unknown as Router);
   component.username = username;
   component.password = password;
   return { component, navigate };
@@ -143,6 +143,28 @@ describe('LoginComponent', () => {
 
       expect(component.message).toEqual({ headline: 'No se pudo autenticar a ana.', detail: 'timeout of 5000ms exceeded' });
       expect(navigate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('sesión expirada', () => {
+    it('muestra el aviso cuando llega desde una expiración de sesión', () => {
+      const navigation = { extras: { state: { sessionExpired: true } } };
+      const component = new LoginComponent({
+        navigate: vi.fn(),
+        getCurrentNavigation: () => navigation
+      } as unknown as Router);
+
+      component.ngOnInit();
+
+      expect(component.message).toEqual({ headline: 'Tu sesión ha expirado. Inicia sesión de nuevo.' });
+    });
+
+    it('no muestra aviso si la navegación no trae expiración', () => {
+      const { component } = createLogin('ana', VALID_PASSWORD);
+
+      component.ngOnInit();
+
+      expect(component.message).toBeNull();
     });
   });
 

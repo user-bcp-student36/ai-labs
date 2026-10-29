@@ -1,9 +1,10 @@
 import { CommonModule } from '@angular/common';
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import axios from 'axios';
 import merge from 'lodash/merge';
+import { readPreferencesRaw, saveSession, savePreferences } from '../utils/session';
 
 export interface LoginMessage {
   headline: string;
@@ -17,7 +18,7 @@ export interface LoginMessage {
   templateUrl: './login.component.html',
   styleUrl: './login.component.css'
 })
-export class LoginComponent {
+export class LoginComponent implements OnInit {
   username: any = '';
   password: any = '';
   busy: any = false;
@@ -26,10 +27,16 @@ export class LoginComponent {
 
   constructor(private router: Router) {
     try {
-      const saved = JSON.parse(localStorage.getItem('workshop_preferences') || '{}');
+      const saved = JSON.parse(readPreferencesRaw() || '{}');
       this.preferences = merge(this.preferences, saved);
     } catch (error) {
       console.log('Preferences could not be loaded', error);
+    }
+  }
+
+  ngOnInit(): void {
+    if (this.router.getCurrentNavigation()?.extras.state?.['sessionExpired']) {
+      this.message = { headline: 'Tu sesión ha expirado. Inicia sesión de nuevo.' };
     }
   }
 
@@ -49,9 +56,8 @@ export class LoginComponent {
             { timeout: 5000 }
           );
           if (response && response.data && response.data.token) {
-            localStorage.setItem('workshop_token', response.data.token);
-            localStorage.setItem('workshop_user', JSON.stringify(response.data.user));
-            localStorage.setItem('workshop_preferences', JSON.stringify(this.preferences));
+            saveSession(response.data.token, response.data.user);
+            savePreferences(this.preferences);
             await this.router.navigate(['/dashboard']);
           } else {
             this.message = { headline: 'El backend respondió sin token.' };

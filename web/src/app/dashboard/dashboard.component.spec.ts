@@ -121,17 +121,28 @@ describe('DashboardComponent', () => {
   });
 
   describe('errores', () => {
-    it('muestra el detalle del backend cuando el token es inválido (401)', async () => {
+    it('ante HTTP 401 borra la sesión y redirige a /login con aviso de expiración sin exponer el token', async () => {
+      const consoleSpies = [
+        vi.spyOn(console, 'error').mockImplementation(() => undefined),
+        vi.spyOn(console, 'log').mockImplementation(() => undefined),
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      ];
+      storage.setItem('workshop_preferences', JSON.stringify({ theme: 'dark' }));
       mockedGet.mockRejectedValueOnce({
         message: 'Request failed with status code 401',
         response: { status: 401, data: { detail: 'Token inválido' } }
       });
-      const { component } = createDashboard();
+      const { component, navigate } = createDashboard();
 
       await component.ngOnInit();
 
-      expect(component.error).toBe('Token inválido');
-      expect(component.loading).toBe(false);
+      expect(storage.getItem('workshop_token')).toBeNull();
+      expect(storage.getItem('workshop_user')).toBeNull();
+      expect(storage.getItem('workshop_preferences')).toBeNull();
+      expect(navigate).toHaveBeenCalledWith(['/login'], { state: { sessionExpired: true } });
+      for (const spy of consoleSpies) {
+        expect(JSON.stringify(spy.mock.calls)).not.toContain(TOKEN);
+      }
     });
 
     it('muestra el error de conexión cuando el servicio de tareas no está disponible', async () => {
@@ -154,6 +165,40 @@ describe('DashboardComponent', () => {
 
       expect(component.error).toBe('timeout of 5000ms exceeded');
       expect(component.loading).toBe(false);
+    });
+
+    it('ante HTTP 500 muestra el error y conserva el token y los datos de sesión', async () => {
+      mockedGet.mockRejectedValueOnce({
+        message: 'Request failed with status code 500',
+        response: { status: 500, data: { detail: 'Error interno' } }
+      });
+      const { component, navigate } = createDashboard();
+
+      await component.ngOnInit();
+
+      expect(component.error).toBe('Error interno');
+      expect(component.loading).toBe(false);
+      expect(storage.getItem('workshop_token')).toBe(TOKEN);
+      expect(storage.getItem('workshop_user')).not.toBeNull();
+      expect(navigate).not.toHaveBeenCalled();
+    });
+
+    it('ante error de red no expone el token en la interfaz ni en la consola', async () => {
+      const consoleSpies = [
+        vi.spyOn(console, 'error').mockImplementation(() => undefined),
+        vi.spyOn(console, 'log').mockImplementation(() => undefined),
+        vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+      ];
+      mockedGet.mockRejectedValueOnce(new Error('Network Error'));
+      const { component } = createDashboard();
+
+      await component.ngOnInit();
+
+      expect(component.error).toBe('Network Error');
+      expect(component.error).not.toContain(TOKEN);
+      for (const spy of consoleSpies) {
+        expect(JSON.stringify(spy.mock.calls)).not.toContain(TOKEN);
+      }
     });
   });
 });

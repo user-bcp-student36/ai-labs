@@ -3,6 +3,7 @@ import { ChangeDetectorRef, Component, NgZone, OnInit } from '@angular/core';
 import { Router } from '@angular/router';
 import axios from 'axios';
 import { formatTaskLabel } from '../utils/legacy-format';
+import { clearSession, expireSession, readToken, readUser } from '../utils/session';
 
 const STATUS_LABELS: Record<string, string> = {
   TODO: 'Por hacer',
@@ -33,8 +34,8 @@ export class DashboardComponent implements OnInit {
   }
 
   async ngOnInit(): Promise<void> {
-    const token = localStorage.getItem('workshop_token');
-    this.user = JSON.parse(localStorage.getItem('workshop_user') || '{}');
+    const token = readToken();
+    this.user = readUser();
     if (!token) {
       await this.router.navigate(['/login']);
       return;
@@ -63,6 +64,10 @@ export class DashboardComponent implements OnInit {
         this.cdr.detectChanges();
       });
     } catch (error: any) {
+      if (error?.response?.status === 401) {
+        await this.redirectToLoginAfterExpiry();
+        return;
+      }
       this.zone.run(() => {
         this.error = error?.response?.data?.detail || error?.message || 'No se pudo cargar el dashboard';
         this.loading = false;
@@ -72,8 +77,12 @@ export class DashboardComponent implements OnInit {
   }
 
   async logout(): Promise<void> {
-    localStorage.removeItem('workshop_token');
-    localStorage.removeItem('workshop_user');
+    clearSession();
     await this.router.navigate(['/login']);
+  }
+
+  private async redirectToLoginAfterExpiry(): Promise<void> {
+    expireSession();
+    await this.router.navigate(['/login'], { state: { sessionExpired: true } });
   }
 }
