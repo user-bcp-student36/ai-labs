@@ -8,6 +8,7 @@ services:
     build: ./api
     environment:
       AUTH_HEALTH_URL: http://auth:8080/q/health
+      WORKSHOP_TOKEN_HMAC_SECRET: ${WORKSHOP_TOKEN_HMAC_SECRET:-}
       WORKSHOP_DB_PATH: /data/workshop.db
       WORKSHOP_UPLOAD_DIR: /uploads
     volumes:

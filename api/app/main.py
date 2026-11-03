@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import base64
+import binascii
+import hashlib
+import hmac
+import json
 import os
 import sqlite3
 import time
@@ -8,27 +12,93 @@ from pathlib import Path
 from typing import Any
 
 import urllib3
-from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, Query, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 
-LEGACY_SECRET = "WORKSHOP_SECRET_2026"
+TOKEN_HMAC_SECRET_ENV = "WORKSHOP_TOKEN_HMAC_SECRET"
+TOKEN_ALGORITHM = "HS256"
+TOKEN_TYPE = "JWT"
+TOKEN_EXPIRATION_CLAIM = "exp"
+TOKEN_USERNAME_CLAIM = "username"
+TOKEN_ROLE_CLAIM = "role"
+BEARER_PREFIX = "Bearer "
+INVALID_TOKEN_DETAIL = "Invalid token"
+TOKEN_VERIFICATION_UNAVAILABLE_DETAIL = "Token verification is not configured"
 
 
-def legacy_identity(authorization: str = Header(default="")) -> dict[str, str]:
+def decode_base64url(value: str) -> bytes:
+    if not value or "=" in value:
+        raise ValueError("invalid base64url segment")
+    decoded = base64.b64decode(value + "=" * (-len(value) % 4), altchars=b"-_", validate=True)
+    if base64.urlsafe_b64encode(decoded).rstrip(b"=").decode("ascii") != value:
+        raise ValueError("non-canonical base64url segment")
+    return decoded
+
+
+def verify_hmac_token(token: str, secret: str) -> dict[str, str]:
     try:
-        token = authorization.replace("Bearer ", "")
-        decoded = base64.b64decode(token).decode("utf-8")
-        parts = decoded.split("|")
-        if len(parts) != 4 or parts[3] != LEGACY_SECRET or int(parts[2]) < int(time.time()):
-            raise ValueError("invalid token")
-        return {"username": parts[0], "role": parts[1]}
-    except Exception as error:
-        raise HTTPException(status_code=401, detail="Invalid token: " + str(error)) from error
+        header_segment, payload_segment, signature_segment = token.split(".")
+        header = json.loads(decode_base64url(header_segment))
+        if not isinstance(header, dict) or header.get("alg") != TOKEN_ALGORITHM or header.get("typ") != TOKEN_TYPE:
+            raise ValueError("unsupported token header")
+
+        signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
+        signature = decode_base64url(signature_segment)
+        expected_signature = hmac.new(secret.encode("utf-8"), signing_input, hashlib.sha256).digest()
+        if not hmac.compare_digest(signature, expected_signature):
+            raise ValueError("invalid token signature")
+
+        claims = json.loads(decode_base64url(payload_segment))
+        if not isinstance(claims, dict):
+            raise ValueError("invalid token claims")
+        username = claims.get(TOKEN_USERNAME_CLAIM)
+        role = claims.get(TOKEN_ROLE_CLAIM)
+        expires_at = claims.get(TOKEN_EXPIRATION_CLAIM)
+        if (
+            not isinstance(username, str)
+            or not username
+            or not isinstance(role, str)
+            or not role
+            or isinstance(expires_at, bool)
+            or not isinstance(expires_at, int)
+            or expires_at <= int(time.time())
+        ):
+            raise ValueError("invalid token claims")
+        return {TOKEN_USERNAME_CLAIM: username, TOKEN_ROLE_CLAIM: role}
+    except (ValueError, UnicodeError, TypeError, binascii.Error) as error:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=INVALID_TOKEN_DETAIL,
+        ) from error
 
 
-def create_app(db_path: str | None = None, upload_dir: str | None = None) -> FastAPI:
+def legacy_identity(
+    request: Request,
+    authorization: str = Header(default=""),
+) -> dict[str, str]:
+    secret = request.app.state.token_hmac_secret
+    if not secret:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=TOKEN_VERIFICATION_UNAVAILABLE_DETAIL,
+        )
+    if not authorization.startswith(BEARER_PREFIX):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=INVALID_TOKEN_DETAIL)
+    return verify_hmac_token(authorization[len(BEARER_PREFIX) :], secret)
+
+
+def create_app(
+    db_path: str | None = None,
+    upload_dir: str | None = None,
+    token_hmac_secret: str | None = None,
+) -> FastAPI:
     selected_db = db_path or os.getenv("WORKSHOP_DB_PATH", "./data/workshop.db")
     selected_uploads = upload_dir or os.getenv("WORKSHOP_UPLOAD_DIR", "./uploads")
+    selected_token_hmac_secret = (
+        token_hmac_secret
+        if token_hmac_secret is not None
+        else os.getenv(TOKEN_HMAC_SECRET_ENV)
+    )
     Path(selected_db).parent.mkdir(parents=True, exist_ok=True)
     Path(selected_uploads).mkdir(parents=True, exist_ok=True)
 
@@ -45,6 +115,7 @@ def create_app(db_path: str | None = None, upload_dir: str | None = None) -> Fas
     app = FastAPI(title="Workshop Requirements API", version="0.1.0")
     app.state.connection = connection
     app.state.upload_dir = selected_uploads
+    app.state.token_hmac_secret = selected_token_hmac_secret
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
